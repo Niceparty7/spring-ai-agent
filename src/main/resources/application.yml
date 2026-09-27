@@ -1,0 +1,46 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: spring-ai-agent-crud-demo
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+
+  # 启动时自动执行 schema.sql / data.sql（脚本本身幂等，可反复启动）
+  sql:
+    init:
+      mode: always
+      continue-on-error: true
+      encoding: UTF-8
+
+  ai:
+    dashscope:
+      # ★ 必填：阿里云百炼 API Key，通过环境变量 AI_DASHSCOPE_API_KEY 注入
+      #    获取地址：https://bailian.console.aliyun.com  ->  API-KEY 管理
+      #    默认值仅用于占位，不配置时应用仍可启动，但调用 Agent 会返回鉴权错误
+      api-key: ${AI_DASHSCOPE_API_KEY:sk-please-set-your-dashscope-api-key}
+      chat:
+        options:
+          # 工具调用（Function Calling）稳定性最佳；若想省钱可换 qwen-plus 实测
+          model: qwen-max
+          temperature: 0.3
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 打印 SQL 日志，便于观察 Agent 到底执行了哪条 CRUD
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+logging:
+  level:
+    com.example.agentdemo: debug
