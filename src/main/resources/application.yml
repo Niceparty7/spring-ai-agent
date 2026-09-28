@@ -27,7 +27,7 @@ spring:
       chat:
         options:
           # 工具调用（Function Calling）稳定性最佳；若想省钱可换 qwen-plus 实测
-          model: qwen-max
+          model: deepseek-v4-flash-0731
           temperature: 0.3
 
 mybatis-plus:

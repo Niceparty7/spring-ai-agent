@@ -62,6 +62,17 @@
         header h1 { font-size: 15px; font-weight: 600; }
         header p { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
+        /* 「新对话」按钮：推到 header 最右，并覆盖默认 button 的实心蓝样式 */
+        #newChat {
+            margin-left: auto;
+            background: #fff;
+            color: var(--brand);
+            border: 1px solid var(--line);
+            padding: 7px 14px;
+            font-size: 13px;
+        }
+        #newChat:hover { border-color: var(--brand); background: var(--brand-soft); }
+
         #messages {
             flex: 1;
             overflow-y: auto;
@@ -167,6 +178,8 @@
             <h1>商品管理 AI 助手</h1>
             <p>用自然语言操作商品数据 · Powered by Spring AI + 通义千问</p>
         </div>
+        <!-- 新对话按钮：点后重置会话并清理后端记忆 -->
+        <button id="newChat" type="button">新对话</button>
     </header>
 
     <div id="messages"></div>
@@ -190,6 +203,33 @@
     const inputEl = document.getElementById('input');
     const sendBtn = document.getElementById('send');
     let busy = false;
+
+    // ===== 会话 ID 管理：UUID + localStorage =====
+    const STORAGE_KEY = 'agent_demo_conversation_id';
+
+    // 生成 UUID；优先原生 API，老浏览器降级到手写 v4
+    function genConversationId() {
+        if (window.crypto && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    // 读取已有会话 ID；没有则生成并持久化
+    function loadConversationId() {
+        let id = localStorage.getItem(STORAGE_KEY);
+        if (!id) {
+            id = genConversationId();
+            localStorage.setItem(STORAGE_KEY, id);
+        }
+        return id;
+    }
+
+    let conversationId = loadConversationId();
 
     function addMessage(text, who) {
         const wrap = document.createElement('div');
@@ -232,7 +272,8 @@
             const resp = await fetch('/api/agent/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: content })
+                // 每次请求都带当前会话 ID，后端据此隔离/拼接历史
+                body: JSON.stringify({ message: content, conversationId: conversationId })
             });
             if (!resp.ok) {
                 throw new Error('HTTP ' + resp.status);
@@ -267,6 +308,21 @@
             send(e.target.textContent);
         }
     });
+
+    // 新对话：清理后端旧会话内存 -> 生成并保存新 ID -> 清空消息区 -> 重新欢迎
+    async function resetConversation() {
+        const oldId = conversationId;
+        try {
+            await fetch('/api/agent/conversation?conversationId=' + encodeURIComponent(oldId),
+                { method: 'DELETE' });
+        } catch (e) { /* 后端清理失败也不阻断前端重置 */ }
+        conversationId = genConversationId();
+        localStorage.setItem(STORAGE_KEY, conversationId);
+        messagesEl.innerHTML = '';
+        addMessage('已开启新对话。你可以继续查询、新增、改价或删除商品～', 'bot');
+    }
+
+    document.getElementById('newChat').addEventListener('click', resetConversation);
 
     addMessage('你好，我是商品管理助手。你可以让我查询、新增、改价或删除商品，试试下面的示例～', 'bot');
 </script>
