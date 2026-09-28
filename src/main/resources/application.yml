@@ -18,6 +18,11 @@ spring:
       continue-on-error: true
       encoding: UTF-8
 
+  # ★ 流式输出（SSE）必配：MVC 异步请求默认超时仅 30 秒，长回答会被直接截断
+  mvc:
+    async:
+      request-timeout: 300000   # 5 分钟（毫秒）
+
   ai:
     dashscope:
       # ★ 必填：阿里云百炼 API Key，通过环境变量 AI_DASHSCOPE_API_KEY 注入

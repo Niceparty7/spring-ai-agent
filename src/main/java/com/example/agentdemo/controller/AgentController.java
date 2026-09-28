@@ -5,12 +5,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 
 import java.util.Map;
 
@@ -50,6 +52,50 @@ public class AgentController {
         log.info("Agent 回复: {}", reply);
         // 模型偶尔可能返回空 content（例如仅完成工具调用而没生成文本），此处兜底避免 NPE
         return Map.of("reply", reply == null ? "（模型未返回内容）" : reply);
+    }
+
+    /**
+     * 流式对话入口（SSE）。
+     *
+     * <p>与 {@link #chat} 的唯一差别是 {@code stream()} 取代了 {@code call()}：
+     * 模型每生成一段文本就立即推送一个 SSE 事件，前端可逐字渲染，无需等整段回答。
+     * 其余逻辑（会话 ID 归一化、记忆 Advisor 参数、工具调用）与同步端点完全一致。
+     *
+     * <p>两个必须留意的点：
+     * <ol>
+     *   <li>MVC 异步请求默认超时仅 30 秒，长回答会被截断，已由
+     *       {@code spring.mvc.async.request-timeout} 调大；</li>
+     *   <li>SSE 一旦开始推送，HTTP 状态码就已发出，中途出错无法再改状态码，错误只能"带内"表达。
+     *       因此这里用 {@code onErrorResume} 把异常转成一段可读提示，而不是让连接异常中断。</li>
+     * </ol>
+     */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> chatStream(@RequestBody ChatRequest request) {
+        String conversationId = normalizeConversationId(request.conversationId());
+        log.info("Agent 流式收到问题: {} (conversationId={})", request.message(), conversationId);
+
+        return chatClient.prompt()
+                .user(request.message())
+                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
+                .stream()
+                .content()
+                .doOnComplete(() -> log.info("Agent 流式输出完成 (conversationId={})", conversationId))
+                .onErrorResume(e -> {
+                    log.error("Agent 流式调用失败 (conversationId={})", conversationId, e);
+                    // 注意：值里不要带前导换行 —— SSE 会把多行值拆成多个 data: 帧，
+                    // 空行会变成额外的空帧。前端识别该前缀后自行做视觉分隔。
+                    return Flux.just("[流式输出中断：" + briefMessage(e) + "]");
+                });
+    }
+
+    /** 把异常信息压缩成一行可读文本（异常原文可能很长，直接回显会刷屏）。 */
+    private static String briefMessage(Throwable e) {
+        String msg = e.getMessage();
+        if (msg == null || msg.isBlank()) {
+            return e.getClass().getSimpleName();
+        }
+        msg = msg.replaceAll("\\s+", " ").trim();
+        return msg.length() > 200 ? msg.substring(0, 200) + "…" : msg;
     }
 
     /**

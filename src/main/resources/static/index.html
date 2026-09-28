@@ -265,11 +265,37 @@
         inputEl.style.height = 'auto';
         setBusy(true);
 
-        const bubble = addMessage('', 'bot');
-        bubble.innerHTML = '<span class="loading"><i></i><i></i><i></i></span>';
+        // 先放占位提示：模型调工具期间会有数秒无任何输出，用它告诉用户"正在处理"
+        const bubble = addMessage('正在处理…', 'bot');
+        let acc = '';          // 已累积的文本
+        let gotFirst = false;  // 是否已收到过内容（用于替换占位提示）
+
+        // 消费一个 SSE 帧。
+        // 实测确认 Spring MVC 写出的格式为 data:<值>（冒号后**无**空格），
+        // 值内的换行会被拆成多行 data:，因此这里把多行按顺序拼回。
+        function consumeFrame(frame) {
+            if (frame === '') return;
+            const piece = frame.split('\n')
+                .map(line => line.startsWith('data:') ? line.slice(5) : line)
+                .join('\n');
+            if (piece === '') return;
+
+            if (!gotFirst) { bubble.textContent = ''; gotFirst = true; }
+
+            // 后端在流中途失败时会推一条以该前缀开头的提示，需与正文分隔并标色
+            if (piece.startsWith('[流式输出中断：')) {
+                acc += (acc ? '\n\n' : '') + piece;
+                bubble.style.color = '#b42318';
+            } else {
+                acc += piece;
+                bubble.style.color = '';
+            }
+            bubble.textContent = acc;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
 
         try {
-            const resp = await fetch('/api/agent/chat', {
+            const resp = await fetch('/api/agent/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 // 每次请求都带当前会话 ID，后端据此隔离/拼接历史
@@ -278,11 +304,40 @@
             if (!resp.ok) {
                 throw new Error('HTTP ' + resp.status);
             }
-            const data = await resp.json();
-            bubble.textContent = data.reply || '（无返回内容）';
+            if (!resp.body) {
+                throw new Error('当前浏览器不支持流式读取');
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';   // 尚未成帧的残留
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                // stream: true 让跨 chunk 截断的多字节 UTF-8 字符能正确拼接
+                buffer += decoder.decode(value, { stream: true });
+
+                // SSE 以空行分帧
+                let sep;
+                while ((sep = buffer.indexOf('\n\n')) >= 0) {
+                    const frame = buffer.slice(0, sep);
+                    buffer = buffer.slice(sep + 2);
+                    consumeFrame(frame);
+                }
+            }
+            // 收尾：处理未以空行结束的尾帧
+            if (buffer.trim() !== '') {
+                consumeFrame(buffer);
+            }
+            if (!acc) {
+                bubble.textContent = '（模型未返回内容）';
+            }
         } catch (e) {
-            bubble.textContent = '请求失败：' + e.message +
+            // 已流出的内容尽量保留，仅在末尾追加错误提示
+            bubble.textContent = (acc ? acc + '\n\n' : '') + '请求失败：' + e.message +
                 '\n请确认后端已启动、AI_DASHSCOPE_API_KEY 已配置且有效。';
+            bubble.style.color = '#b42318';
         } finally {
             setBusy(false);
             messagesEl.scrollTop = messagesEl.scrollHeight;
