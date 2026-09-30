@@ -1,0 +1,35 @@
+# ============================================================
+# Redis Stack —— 同时承载「多轮会话记忆」与「RAG 向量库」
+#
+# 为什么必须是 redis/redis-stack 而不是普通 redis：
+#   Spring AI 的 RedisVectorStore 依赖 RediSearch（FT.CREATE / FT.SEARCH）
+#   与 RedisJSON 模块。普通 redis:7.x 不含这些模块，
+#   建索引时会直接报 "unknown command 'FT.CREATE'"。
+#
+# 启动：
+#   docker compose up -d
+#   docker compose ps
+#   docker exec agent-redis-stack redis-cli -a 123456 MODULE LIST   # 应含 search / ReJSON
+#
+# 停止（保留数据）：
+#   docker compose stop
+# 清空数据（会同时清掉会话记忆与向量索引）：
+#   docker compose down -v
+# ============================================================
+services:
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: agent-redis-stack
+    ports:
+      - "6379:6379"      # Redis 协议端口（会话记忆 + 向量库共用同一实例，靠 key 前缀隔离）
+      - "8001:8001"      # RedisInsight 管理面板（浏览器打开 http://localhost:8001，便于查看索引与文档）
+    environment:
+      # 密码需与 application.yml 的 spring.data.redis.password 保持一致
+      # appendonly yes：开启 AOF 持久化，容器重启不丢向量数据
+      REDIS_ARGS: "--requirepass 123456 --appendonly yes"
+    volumes:
+      - redis-stack-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-stack-data:

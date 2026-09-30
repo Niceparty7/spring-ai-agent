@@ -23,7 +23,7 @@ spring:
     async:
       request-timeout: 300000   # 5 分钟（毫秒）
 
-  # Redis：多轮会话记忆的持久化存储
+  # Redis：多轮会话记忆 + RAG 向量库（同一实例，不同 key 前缀隔离）
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -34,6 +34,12 @@ spring:
       # 需要密码时再启用（★ 不要写成 ${REDIS_PASSWORD:}：空串会被绑成 RedisPassword.of("")，
       # 在未设密码的 Redis 上会触发 "ERR Client sent AUTH, but no password is set"）
       password: ${REDIS_PASSWORD:123456}
+      # ★ 显式声明使用 Jedis。说明：Spring Boot 的 JedisConnectionConfiguration 本身带
+      #   matchIfMissing=true，jedis 一旦在 classpath 就会默认胜出；这里显式写出是为了
+      #   让「为什么是 Jedis」在配置里可见。Jedis 与 Lettuce 是二选一（RedisConnectionFactory
+      #   单例），故会话记忆的 StringRedisTemplate 也跑在 Jedis 上（功能透明）。
+      #   必须用 Jedis 的原因：RedisVectorStore 需要 JedisPooled。
+      client-type: jedis
 
   ai:
     dashscope:
@@ -46,6 +52,28 @@ spring:
           # 工具调用（Function Calling）稳定性最佳；若想省钱可换 qwen-plus 实测
           model: deepseek-v4-flash-0731
           temperature: 0.3
+
+      # RAG 的向量化模型。自动装配条件为
+      # @ConditionalOnProperty(name="spring.ai.model.embedding.text",
+      #                        havingValue="dashscope", matchIfMissing=true)
+      # → 默认即装配 DashScopeEmbeddingModel，无需额外依赖。
+      # 显式写出是为了固定模型与维度，避免默认值变动带来的不确定性。
+      embedding:
+        options:
+          model: qwen3.7-text-embedding   # 该模型默认维度 1024
+          dimensions: 1024
+
+    # RAG 向量库（Redis Stack）。要求 Redis 具备 RediSearch / RedisJSON 模块
+    # ——必须用 redis/redis-stack 镜像，普通 redis 会报 unknown command 'FT.CREATE'
+    vectorstore:
+      redis:
+        # ★ 必须显式开启：默认 false，不开则索引不创建，首次 add() 会失败。
+        # 幂等：内部先 FT.INFO 探测，索引已存在则跳过 FT.CREATE，反复重启安全。
+        # 注意：该动作发生在应用启动期，Redis 不在线会导致启动失败（见 README 说明）。
+        initialize-schema: true
+        index-name: agent-knowledge-index
+        # key 前缀，与会话记忆的 "agent:chat:memory:" 物理隔离（严禁设为空或与之重叠）
+        prefix: "agent:kb:"
 
 mybatis-plus:
   configuration:
@@ -71,6 +99,37 @@ app:
     fallback-to-memory: true
     # 降级后的探活冷却：期内不再尝试 Redis（避免每个请求都吃一次连接超时）
     retry-interval: 30s
+
+  # RAG 知识库（自定义配置；刻意避开 spring.ai.* 前缀，防止与自动装配冲突）
+  rag:
+    # 上传文件的落盘目录（相对进程工作目录；不存在时由应用自动创建）
+    storage-dir: "./data/kb-uploads"
+    # 分片参数（TokenTextSplitter）
+    chunk-size: 800
+    min-chunk-size-chars: 350
+    min-chunk-length-to-embed: 5
+    max-num-chunks: 10000
+    keep-separator: true
+    # 检索默认参数
+    default-top-k: 4
+    default-similarity-threshold: 0.5
+    # 单文件大小上限（字节），超过直接拒绝
+    max-file-size: 20971520          # 20 MB
+    # 单文件最大分片数，超过则截断并告警（防超大文档把 embedding 配额打光）
+    max-chunks-per-document: 500
+    # 向量库 Redis key 前缀，须与 spring.ai.vectorstore.redis.prefix 保持一致。
+    # 仅用于删除时的兜底「按 key 前缀扫描孤儿分片」（清单缺失场景）。
+    redis-key-prefix: "agent:kb:"
+    # ★ 单次向量库写入的批量大小。DashScope text-embedding-v3 存在【两道上限】，
+    #   必须取更小的那个：
+    #   (1) SDK 本地断言 ≤ 25 条 → 超出抛 IllegalArgumentException
+    #       "The input texts limit 25."（请求尚未发出，DashScopeApi:219）
+    #   (2) 服务端校验 ≤ 10 条 → 超出返回 HTTP 400
+    #       "batch size is invalid, it should not be larger than 10"（DashScopeApi:226）
+    #   ★ 真正的硬上限是 10，25 只是本地前置断言够不着服务端限制。
+    #     故此处取 10；两者均为不可重试错误（NonTransient）。
+    #   换用其他 embedding 模型/服务商时须重新核对其批量上限。
+    batch-size: 10
 
 logging:
   level:

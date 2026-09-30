@@ -21,6 +21,8 @@
         <java.version>17</java.version>
         <spring-ai-alibaba.version>1.1.2.4-security-fix</spring-ai-alibaba.version>
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <!-- Spring AI 核心版本：与 dashscope starter 的传递 pin 严格一致（RAG 相关新增构件显式 pin 到该版本） -->
+        <spring-ai.version>1.1.2</spring-ai.version>
     </properties>
 
     <dependencyManagement>
@@ -34,6 +36,15 @@
                 <version>${spring-ai-alibaba.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- 锁定 spring-boot-starter 为 parent 版本：
+                 spring-ai-starter-vector-store-redis:1.1.2 的 POM 显式声明了
+                 spring-boot-starter:3.5.8（compile），若不干预会把 Spring Boot 构件降到 3.5.8 -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter</artifactId>
+                <version>${project.parent.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -62,6 +73,49 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- ========== RAG 知识库相关 ========== -->
+
+        <!-- Jedis 客户端：RedisVectorStore 依赖 JedisPooled 实现。
+             注意副作用：Spring Boot 的 JedisConnectionConfiguration 带
+             @ConditionalOnProperty(name="spring.data.redis.client-type", havingValue="jedis",
+                                    matchIfMissing=true)，
+             而 Lettuce 的条件没有 matchIfMissing —— 因此一旦 jedis 进入 classpath，
+             全局唯一的 RedisConnectionFactory 会切为 Jedis（Jedis 与 Lettuce 是二选一，
+             不是共存）。会话记忆的 StringRedisTemplate 也随之跑在 Jedis 上，功能透明。
+             版本由 spring-boot-starter-parent 的 BOM 统一管理，不写死。 -->
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+        </dependency>
+
+        <!-- Redis 向量库 starter：提供 RedisVectorStore（依赖 Redis Stack 的 RediSearch/RedisJSON）。
+             传递带入 spring-ai-autoconfigure-vector-store-redis、
+             spring-ai-autoconfigure-vector-store-observation、spring-ai-redis-store。
+             注意：spring-ai-rag 与 spring-ai-vector-store 已由 dashscope 的 POM 传递带入，
+             无需在此重复声明。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-redis</artifactId>
+            <version>${spring-ai.version}</version>
+        </dependency>
+
+        <!-- PDF 文档解析：PagePdfDocumentReader（底层 Apache PDFBox）。
+             仅支持文本型 PDF，扫描件（图片型）无法提取文本。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-pdf-document-reader</artifactId>
+            <version>${spring-ai.version}</version>
+        </dependency>
+
+        <!-- Markdown 文档解析：MarkdownDocumentReader（标题层级转 metadata）。
+             txt 用 spring-ai-commons 的 TextReader 即可，无需额外依赖；
+             本项目不支持 docx，故不引 spring-ai-tika-document-reader。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-markdown-document-reader</artifactId>
+            <version>${spring-ai.version}</version>
         </dependency>
 
         <!-- 持久层：MyBatis-Plus。不用分页插件，故不引 mybatis-plus-jsqlparser -->
