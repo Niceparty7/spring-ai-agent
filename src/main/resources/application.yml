@@ -23,6 +23,18 @@ spring:
     async:
       request-timeout: 300000   # 5 分钟（毫秒）
 
+  # Redis：多轮会话记忆的持久化存储
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: 0
+      # 降级判定依赖这个超时，别调太大：Redis 挂掉时每次探活都要等它
+      timeout: 2000ms
+      # 需要密码时再启用（★ 不要写成 ${REDIS_PASSWORD:}：空串会被绑成 RedisPassword.of("")，
+      # 在未设密码的 Redis 上会触发 "ERR Client sent AUTH, but no password is set"）
+      password: ${REDIS_PASSWORD:123456}
+
   ai:
     dashscope:
       # ★ 必填：阿里云百炼 API Key，通过环境变量 AI_DASHSCOPE_API_KEY 注入
@@ -45,6 +57,20 @@ mybatis-plus:
       logic-delete-field: isDeleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
+# 多轮会话记忆（自定义配置）
+app:
+  chat-memory:
+    # redis = 持久化到 Redis（默认）；memory = 退回进程内实现（重启即丢，便于本地调试）
+    type: redis
+    # Redis key 前缀，最终 key = key-prefix + conversationId
+    key-prefix: "agent:chat:memory:"
+    # 滑动过期：每次写入都会把该会话的 TTL 重置为该值（不是累加）
+    time-to-live: 24h
+    # Redis 不可用时是否降级为内存实现。false = 快速失败，让问题直接暴露
+    fallback-to-memory: true
+    # 降级后的探活冷却：期内不再尝试 Redis（避免每个请求都吃一次连接超时）
+    retry-interval: 30s
 
 logging:
   level:

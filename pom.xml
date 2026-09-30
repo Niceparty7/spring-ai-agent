@@ -53,6 +53,17 @@
             <version>${spring-ai-alibaba.version}</version>
         </dependency>
 
+        <!-- Redis：为多轮会话记忆提供持久化存储。
+             只引这个 starter 即可拿到 StringRedisTemplate；Lettuce 的连接是懒建立的，
+             因此 Redis 不在线也不影响应用启动（降级逻辑见 ResilientChatMemoryRepository）。
+             版本由 spring-boot-starter-parent 统一管理，不要写死。
+             注：不引 spring-ai-alibaba-starter-memory-redis —— 其 saveAll 不写 EXPIRE（无 TTL），
+             且 builder().build() 内部 Redisson.create() 即时建连会导致启动失败。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- 持久层：MyBatis-Plus。不用分页插件，故不引 mybatis-plus-jsqlparser -->
         <dependency>
             <groupId>com.baomidou</groupId>

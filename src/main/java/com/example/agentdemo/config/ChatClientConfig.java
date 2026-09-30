@@ -4,7 +4,7 @@ import com.example.agentdemo.agent.ProductTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,22 +21,26 @@ public class ChatClientConfig {
     /**
      * 共享对话记忆。
      *
+     * <p>本类只负责「记多少」（{@code maxMessages} 窗口裁剪），「存哪里」交给注入的
+     * {@link ChatMemoryRepository}——由 {@code ChatMemoryConfig} 按
+     * {@code app.chat-memory.type} 装配为 Redis 或进程内实现。
+     *
      * <p>为什么独立成 Bean：
      * <ol>
-     *   <li>{@link MessageWindowChatMemory} 内部持有 {@link InMemoryChatMemoryRepository}，
-     *       那是"所有会话"共用的存储容器（以 conversationId 为 key），必须单例共享；</li>
-     *   <li>「新对话」需要注入它调用 {@code clear(conversationId)} 主动释放内存。</li>
+     *   <li>{@link MessageWindowChatMemory} 内部持有 repository（记忆的实际存储容器），
+     *       必须单例共享；</li>
+     *   <li>「新对话」需要注入它调用 {@code clear(conversationId)} —— 对 Redis 实现而言，
+     *       这一步会删掉对应的 key。</li>
      * </ol>
      *
-     * <p>maxMessages 只限制"单个会话"的消息条数（默认 20，SystemMessage 不参与裁剪），
-     * <b>不限制会话数量</b>——后者是内存版的固有限制。
+     * <p>maxMessages 只限制「单个会话」的消息条数（默认 20，SystemMessage 不参与裁剪），
+     * <b>不限制会话数量</b>——会话数量的收敛靠 Redis key 的 TTL（见
+     * {@code app.chat-memory.time-to-live}）。
      */
     @Bean
-    public ChatMemory chatMemory() {
+    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository) {
         return MessageWindowChatMemory.builder()
-                // 不传 repository 时框架也会自动 new InMemoryChatMemoryRepository()，
-                // 这里显式写出便于阅读，也便于日后替换为 JDBC / Redis 实现。
-                .chatMemoryRepository(new InMemoryChatMemoryRepository())
+                .chatMemoryRepository(chatMemoryRepository)
                 .maxMessages(20)
                 .build();
     }
