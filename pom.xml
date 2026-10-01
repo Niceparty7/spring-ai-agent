@@ -118,6 +118,32 @@
             <version>${spring-ai.version}</version>
         </dependency>
 
+        <!-- ========== MCP（Model Context Protocol）相关 ========== -->
+
+        <!-- MCP Client：以 stdio 方式接入本地 MCP Server（filesystem），
+             把远程工具并入 ChatClient。
+             选 httpclient 版而非 webflux 版：本工程是 Servlet MVC 应用，
+             webflux 版会额外引入响应式传输依赖，无必要。
+             注意：该 starter 的 POM 显式声明了 spring-boot-starter:3.5.8（compile），
+             与 vector-store-redis 同款坑，由上方 dependencyManagement 的
+             既有 pin（3.5.10）兜底覆盖，不要删除那段管理。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+            <version>${spring-ai.version}</version>
+        </dependency>
+
+        <!-- MCP Server（WebMvc SSE 传输）：把本应用的 @Tool 工具经
+             /sse + /mcp/message 端点暴露给外部 MCP 客户端
+             （Claude Desktop / WorkBuddy 等）。
+             同样显式 pin 1.1.2；传递引入 MCP Java SDK（io.modelcontextprotocol.sdk:mcp）
+             0.17.0，与 client starter 传递的 SDK 版本一致，两侧无冲突。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+            <version>${spring-ai.version}</version>
+        </dependency>
+
         <!-- 持久层：MyBatis-Plus。不用分页插件，故不引 mybatis-plus-jsqlparser -->
         <dependency>
             <groupId>com.baomidou</groupId>

@@ -3,17 +3,25 @@ package com.example.agentdemo.config;
 import com.example.agentdemo.agent.KnowledgeTools;
 import com.example.agentdemo.agent.ProductTools;
 import com.example.agentdemo.rag.FaultTolerantDocumentRetriever;
+import io.modelcontextprotocol.client.McpSyncClient;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
+import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugmenter;
 import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * 装配 Agent 使用的 ChatClient。
@@ -21,6 +29,7 @@ import org.springframework.context.annotation.Configuration;
  * <p>{@code ChatClient.Builder} 由 spring-ai-alibaba-starter-dashscope 传递引入的
  * spring-ai-autoconfigure-model-chat-client 自动装配提供，直接注入即可。
  */
+@Slf4j
 @Configuration
 public class ChatClientConfig {
 
@@ -57,7 +66,46 @@ public class ChatClientConfig {
                                  KnowledgeTools knowledgeTools,
                                  ChatMemory chatMemory,
                                  VectorStore vectorStore,
-                                 RagProperties ragProps) {
+                                 RagProperties ragProps,
+                                 ObjectProvider<List<McpSyncClient>> mcpSyncClientsProvider) {
+
+        // ---- MCP 工具（filesystem 等远程工具）----
+        // spring.ai.mcp.client.enabled=false 时不存在 List<McpSyncClient> Bean，
+        // 此处解析为空列表，直接跳过——应用按「无 MCP 工具」装配，照常可用。
+        List<McpSyncClient> mcpClients = mcpSyncClientsProvider.stream()
+                .flatMap(List::stream)
+                .toList();
+        if (!mcpClients.isEmpty()) {
+            // ★ 手工构建、刻意不作为容器 Bean 注册：
+            //   本进程 MCP Server 的 ToolCallbackConverterAutoConfiguration 会收集
+            //   容器中全部 ToolCallbackProvider Bean 对外暴露，若此处注册为 Bean，
+            //   filesystem 远程工具会被本 Server 重复暴露（串扰）。
+            //   因此同时配置了 spring.ai.mcp.client.toolcallback.enabled=false
+            //   关掉框架的自动注册，只在此处「一次性」接进 ChatClient。
+            // builder 默认行为：toolFilter 全放行；工具名不冲突时保持原名
+            // （read_file/list_directory 等，与本地 6 个工具无重名）。
+            try {
+                // 显式取一次工具清单，再把它交给 ChatClient：
+                // 1) 拿到名字用于启动日志 —— 「连接成功但工具为空」是本类故障中最隐蔽的中间态，
+                //    必须在启动期就看得见，而不是等对话时才发现模型不调工具；
+                // 2) 直接传数组避免 defaultToolCallbacks(provider) 再触发一次 tools/list 往返。
+                ToolCallback[] mcpToolCallbacks = SyncMcpToolCallbackProvider.builder()
+                        .mcpClients(mcpClients)
+                        .build()
+                        .getToolCallbacks();
+                log.info("MCP 客户端已接入 {} 个外部工具: {}", mcpToolCallbacks.length,
+                        Arrays.stream(mcpToolCallbacks)
+                                .map(cb -> cb.getToolDefinition().name())
+                                .toList());
+                builder.defaultToolCallbacks(mcpToolCallbacks);
+            }
+            catch (Exception e) {
+                // 降级但不静默：MCP 工具只是「增强」，连接层已由 client.initialize() 保证，
+                // 此处失败不应拖垮启动；但必须留下 ERROR 日志 + 可通过 /api/mcp/client/tools 复查。
+                log.error("MCP 外部工具注册失败，本次启动将不包含 MCP 工具", e);
+            }
+        }
+
         return builder
                 .defaultSystem("""
                         你是「商品管理系统」的智能助手。

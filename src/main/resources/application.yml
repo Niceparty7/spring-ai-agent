@@ -75,6 +75,74 @@ spring:
         # key 前缀，与会话记忆的 "agent:chat:memory:" 物理隔离（严禁设为空或与之重叠）
         prefix: "agent:kb:"
 
+    # ========== MCP（Model Context Protocol）==========
+    mcp:
+      # ----- Client：以 stdio 方式拉起本地 filesystem MCP Server，把远程工具并入 ChatClient -----
+      client:
+        # 总开关：子进程环境不可用时（如服务器上没装 Node）可整体关闭，
+        # 关闭后 ChatClientConfig 拿不到 McpSyncClient，自动按无 MCP 工具装配，应用照常启动
+        enabled: ${MCP_CLIENT_ENABLED:true}
+        type: SYNC
+        name: agent-crud-demo-mcp-client
+        # 单次工具调用超时：filesystem 本地操作很快，30s 足够
+        request-timeout: 30s
+        # ★ 关键防串扰：默认 true 时框架会把 SyncMcpToolCallbackProvider 注册为容器 Bean，
+        #   而本进程 MCP Server 的 ToolCallbackConverterAutoConfiguration 会收集
+        #   【容器中全部 ToolCallbackProvider Bean】对外暴露 → filesystem 远程工具会被
+        #   本 Server 重复暴露。故关闭自动注册，MCP 工具改由 ChatClientConfig 手工构建
+        #   provider（不作为 Bean）接入 ChatClient。
+        toolcallback:
+          enabled: false
+        stdio:
+          connections:
+            filesystem:
+              # ★ 预装 node_modules + node.exe 绝对路径，绕开 Windows 两个坑：
+              #   (1) Java ProcessBuilder 无法直接执行 npx(.cmd 批处理)，必须 cmd /c 包一层；
+              #   (2) 应用启动期首次 npx 下载有分钟级延迟与网络不确定性。
+              command: "E:/nodejs/node.exe"
+              args:
+                - "E:/workbuddy-space/agent/spring-ai-agent-crud-demo/mcp-servers/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"
+                # filesystem server 的允许访问根目录（位置参数，必须）：
+                # 该目录之外的文件操作都会被 server 拒绝
+                - "E:/workbuddy-space/agent/spring-ai-agent-crud-demo/data/mcp-fs-root"
+
+      # ----- Server：把本地 6 个 @Tool 暴露给外部 MCP 客户端 -----
+      server:
+        enabled: true
+        name: agent-crud-demo-mcp-server
+        version: 0.0.1
+        type: SYNC
+        # ★ 传输协议：STREAMABLE = MCP 新规范的 Streamable HTTP（客户端只配一个 URL 即可用）。
+        #   WebMvc 侧由 McpServerStreamableHttpWebMvcAutoConfiguration 提供，
+        #   端点 = spring.ai.mcp.server.streamable-http.mcp-endpoint（默认 /mcp）。
+        #
+        #   为什么从 SSE 改为 STREAMABLE：
+        #   SSE 是老式传输，必须「先 GET /sse 建长连接拿 sessionId，再 POST 到 message 端点」；
+        #   多数现代 MCP 客户端（如 WorkBuddy / Claude Desktop）只给一个 URL 时会按
+        #   Streamable HTTP 去连 —— POST /mcp 期待直接拿响应。用 SSE 模式对接必然失败：
+        #   实测不带 sessionId 的 POST /mcp/message 会返回 400
+        #   "Session ID missing in message endpoint"，客户端因此拿不到工具列表，
+        #   模型上下文里没有工具 → 只会「自由发挥」而不是发起工具调用。
+        protocol: STREAMABLE
+        stdio: false           # WebMvc 传输要求非 stdio 模式（默认即 false，显式写出防误开）
+        instructions: "商品管理 CRUD 与知识库检索工具服务"
+        # searchKnowledgeBase 会实时调 embedding（跨公网），默认 20s 偏紧
+        request-timeout: 60s
+        # Streamable HTTP 端点（客户端配置 http://localhost:8080/mcp 即可）
+        streamable-http:
+          mcp-endpoint: /mcp
+          keep-alive-interval: 30s
+        # SSE 端点保留（老客户端兼容）：改协议后这两个端点不再注册，
+        # 若需回退 SSE 只需把上面 protocol 改回 SSE 并重启即可
+        sse-endpoint: /sse
+        sse-message-endpoint: /mcp/message
+        keep-alive-interval: 30s
+        capabilities:
+          tool: true
+          resource: false      # 未提供的能力显式关掉，避免对客户端误通告
+          prompt: false
+          completion: false
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

@@ -27,3 +27,7 @@ Thumbs.db
 application-local.yml
 application-local.properties
 *.log
+
+### MCP 本地运行时（勿提交） ###
+mcp-servers/node_modules/
+data/mcp-fs-root/
