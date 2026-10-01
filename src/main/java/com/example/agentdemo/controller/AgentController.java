@@ -1,6 +1,7 @@
 package com.example.agentdemo.controller;
 
 import com.example.agentdemo.dto.ChatRequest;
+import com.example.agentdemo.skill.SkillSessionState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -29,6 +30,9 @@ public class AgentController {
 
     /** 注入共享记忆，供「新对话」主动释放该会话的历史。 */
     private final ChatMemory chatMemory;
+
+    /** 会话级 skill 激活态，「新对话」时一并清理，避免跨会话串 skill。 */
+    private final SkillSessionState skillSessionState;
 
     @PostMapping("/chat")
     public Map<String, String> chat(@RequestBody ChatRequest request) {
@@ -108,7 +112,8 @@ public class AgentController {
     public Map<String, String> resetConversation(@RequestParam(required = false) String conversationId) {
         String cid = normalizeConversationId(conversationId);
         chatMemory.clear(cid);
-        log.info("已清理会话历史: {}", cid);
+        skillSessionState.clear(cid);
+        log.info("已清理会话历史与 skill 激活态: {}", cid);
         return Map.of("status", "cleared", "conversationId", cid);
     }
 

@@ -3,6 +3,9 @@ package com.example.agentdemo.config;
 import com.example.agentdemo.agent.KnowledgeTools;
 import com.example.agentdemo.agent.ProductTools;
 import com.example.agentdemo.rag.FaultTolerantDocumentRetriever;
+import com.example.agentdemo.skill.SkillInstructionAdvisor;
+import com.example.agentdemo.skill.SkillInstructionsAssembler;
+import com.example.agentdemo.skill.SkillTools;
 import io.modelcontextprotocol.client.McpSyncClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -64,6 +67,9 @@ public class ChatClientConfig {
     public ChatClient chatClient(ChatClient.Builder builder,
                                  ProductTools productTools,
                                  KnowledgeTools knowledgeTools,
+                                 SkillTools skillTools,
+                                 SkillInstructionsAssembler skillInstructionsAssembler,
+                                 SkillInstructionAdvisor skillInstructionAdvisor,
                                  ChatMemory chatMemory,
                                  VectorStore vectorStore,
                                  RagProperties ragProps,
@@ -107,22 +113,13 @@ public class ChatClientConfig {
         }
 
         return builder
-                .defaultSystem("""
-                        你是「商品管理系统」的智能助手。
-                        你可以调用工具完成商品的查询、新增、改价、删除；
-                        也可以基于「知识库」回答文档相关的问题。
-
-                        规则：
-                        1. 只要用户意图涉及商品操作，就必须调用相应工具，不要凭空编造数据；
-                        2. 涉及改价或删除时，如果缺少商品 ID，先向用户询问 ID，不要猜测；
-                        3. 回答知识库问题时，优先依据上下文中已提供的资料；资料不足时
-                           调用 searchKnowledgeBase 工具进一步检索；
-                        4. 知识库中查不到的内容，要如实说明「知识库中未找到」，不要编造；
-                        5. 工具返回的内容要如实转述，并用简洁的中文总结关键结果。
-                        """)
+                // 基础系统提示词外置到 SkillInstructionsAssembler（原硬编码文本块），
+                // 与 skill 指令注入解耦；skill 指令由 SkillInstructionAdvisor 按会话动态拼装。
+                .defaultSystem(skillInstructionsAssembler.baseSystemPrompt())
                 // 传入带 @Tool 注解的 Bean，框架自动扫描并生成模型可理解的 JSON Schema。
+                // skillTools（listSkills/loadSkill/runSkillScript）常驻，保证模型随时能发现/激活技能。
                 // 注意：不要再对同一工具调用 .tools()，否则会报 "Multiple tools with the same name"。
-                .defaultTools(productTools, knowledgeTools)
+                .defaultTools(productTools, knowledgeTools, skillTools)
                 // 记忆顾问以 defaultAdvisor 形式注册：它本身无状态，具体使用哪个会话由
                 // 每次请求的 CONVERSATION_ID 参数决定（见 AgentController），
                 // 因此一个单例 ChatClient + 一个 advisor 实例即可服务任意多个会话。
@@ -138,6 +135,10 @@ public class ChatClientConfig {
                 // 避免多轮对话后历史迅速膨胀。因此这里无需显式指定 order。
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
+                        // skill 指令注入顾问：按会话把「已激活 skill 的指令」拼进系统提示词。
+                        // 无状态单例，order=100（在记忆顾问之后、RAG 顾问之前），
+                        // 同时负责把 conversationId 写入 ThreadLocal 供 loadSkill 读取。
+                        skillInstructionAdvisor,
                         RetrievalAugmentationAdvisor.builder()
                                 // ★ 关键：用容错装饰器包住检索器。
                                 //   RAG 检索需要实时调用 embedding 服务（跨公网），失败时框架会让

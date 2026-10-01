@@ -199,6 +199,32 @@ app:
     #   换用其他 embedding 模型/服务商时须重新核对其批量上限。
     batch-size: 10
 
+  # skill（技能/能力）系统（自定义配置；刻意避开 spring.ai.* 前缀）
+  skill:
+    # skill 根目录，其下每个子目录 = 一个 skill（内含 SKILL.md）
+    root-dir: "./data/skills"
+    # 总开关：false 时扫描/激活/脚本全部禁用
+    enabled: true
+    # 启动时立即扫描一次
+    scan-on-startup: true
+    # 热重载：定时轮询 SKILL.md 的 lastModified，变化才重扫（不用 WatchService，Windows 下不可靠）
+    hot-reload-enabled: true
+    hot-reload-interval: 10s
+    # 单脚本执行超时（超时强制杀进程）
+    script-timeout: 30s
+    # 脚本输出截断阈值
+    script-max-output-chars: 8000
+    # 脚本参数个数上限
+    script-max-args: 8
+    # 脚本并发上限
+    script-max-concurrent: 2
+    # 会话激活态 TTL（无交互超过此时长后惰性回收）
+    session-ttl: 1h
+    # 基础系统提示词：留空则用内置默认
+    base-system-prompt: ""
+    # 脚本解释器映射（扩展名 -> 可执行名），留空用内置默认(.py->python/.sh->bash/.bat->cmd)
+    script-interpreters: {}
+
 logging:
   level:
     com.example.agentdemo: debug

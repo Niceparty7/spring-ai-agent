@@ -31,3 +31,5 @@ application-local.properties
 ### MCP 本地运行时（勿提交） ###
 mcp-servers/node_modules/
 data/mcp-fs-root/
+data/kb-uploads/
+data/skills/
